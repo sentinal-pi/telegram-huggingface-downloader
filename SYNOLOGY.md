@@ -46,6 +46,9 @@ NAS_BACKUP_DIR=/volume1/AIModels
 NAS_STATE_DIR=/volume1/docker/telegram-model-backup/state
 MAX_MODEL_GB=100
 MIN_FREE_GB=5
+HF_MAX_RETRIES=5
+HF_RETRY_BASE_SECONDS=30
+HF_RETRY_MAX_SECONDS=600
 ```
 
 `PUID=1026` และ `PGID=100` เป็นตัวอย่าง ไม่ใช่ค่าของทุก NAS ต้องใช้ UID/GID ของบัญชี DSM ที่จะเขียนไฟล์ และให้บัญชีนั้นมีสิทธิ์อ่าน/เขียน **ทั้ง AIModels และ state/** ผ่าน File Station → Properties → Permission รวมสิทธิ์ผ่านโฟลเดอร์แม่
@@ -99,6 +102,8 @@ Qwen/Qwen2.5-0.5B-Instruct
 - `/status 1` ดูรายละเอียดงาน รวมไฟล์ปัจจุบัน
 - `/models` หรือ `/list` ดูโมเดลที่สำเร็จทั้งหมดแบบแบ่งหน้า
 - `/cancel 1` ยกเลิก และ `/retry 1` ลองใหม่
+
+เมื่อเจอ HTTP 429 (Rate Limit) บอตจะรอแล้วลองใหม่อัตโนมัติสูงสุด 5 ครั้งต่อขั้นตอน/ไฟล์ ดูเวลารอและครั้งที่ลองได้จาก `/status 1` และยกเลิกได้ระหว่างรอ ถ้าครบแล้วยังไม่สำเร็จให้รอแล้วใช้ `/retry 1` ค่า `HF_RETRY_BASE_SECONDS`/`HF_RETRY_MAX_SECONDS` ควบคุม backoff เมื่อไม่มีเวลารอจากเซิร์ฟเวอร์ หากมี `Retry-After` หรือ RateLimit reset จะรออย่างน้อยตามที่เซิร์ฟเวอร์ระบุ แม้จะเกิน max ที่ตั้งไว้ ตัวแปรเหล่านี้มีค่าเริ่มต้นจึงไม่ต้องเพิ่มใน `.env` เดิมหากไม่ต้องการปรับ
 
 ไฟล์อยู่ใน File Station ที่:
 

@@ -5,6 +5,7 @@ import math
 import os
 import shutil
 import sys
+import time
 from contextlib import suppress
 from functools import wraps
 from pathlib import Path
@@ -16,6 +17,7 @@ from telegram.error import TelegramError
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from .core import Store, parse_repo
+from .retry import RetryPolicy
 
 HELP = '''🤖 AI Model Backup — Hugging Face
 ส่ง URL หน้าโมเดล หรือ owner/model ได้โดยตรง
@@ -161,8 +163,12 @@ async def status(update, context):
                 if count:
                     line += f"\nไฟล์ที่เสร็จ {done}/{count} ({done / count * 100:.1f}% ตามจำนวนไฟล์)"
                 phases = {'downloading': 'ดาวน์โหลด', 'sha256': 'ตรวจ SHA-256',
-                          'completed': 'สำเร็จ', 'failed': 'ล้มเหลว'}
+                          'completed': 'สำเร็จ', 'failed': 'ล้มเหลว',
+                          'planning': 'ตรวจรายการไฟล์', 'rate_limited': 'ติด Rate Limit — รอลองใหม่อัตโนมัติ'}
                 line += f"\nขั้นตอน: {phases.get(p.get('phase'), p.get('phase', 'เตรียมงาน'))}"
+                if p.get('phase') == 'rate_limited':
+                    remaining = max(0, math.ceil(p.get('retry_at', 0) - time.time()))
+                    line += f"\nลองใหม่ใน {remaining} วินาที (ครั้ง {p['retry_number']}/{p['retry_limit']})"
                 if 'bytes' in p:
                     line += f"\nขนาดไฟล์ทั้งหมด: {p['bytes'] / 1024**3:.3f} GiB"
                 line += f"\n{p.get('file', p.get('path', p.get('error', '')))}"
@@ -343,8 +349,9 @@ def main():
             value = float(os.getenv(key, default))
             if not math.isfinite(value) or value <= 0:
                 raise ValueError()
+        RetryPolicy.from_env()
     except ValueError:
-        raise SystemExit('กรุณาตั้ง TELEGRAM_BOT_TOKEN, ALLOWED_USER_IDS และค่าพื้นที่เป็นเลขบวกใน .env')
+        raise SystemExit('ตรวจ TELEGRAM_BOT_TOKEN, ALLOWED_USER_IDS, ค่าพื้นที่ และค่า HF_* retry ใน .env')
     root = Path(os.getenv('BACKUP_DIR', './backups')).expanduser().resolve()
     state = Path(os.getenv('STATE_DIR', './state')).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)

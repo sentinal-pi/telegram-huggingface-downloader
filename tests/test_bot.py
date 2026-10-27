@@ -1,15 +1,66 @@
 import asyncio
+import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from model_backup.bot import download_text, enqueue, list_backups, shutdown, status
+from model_backup.bot import cancel, download_text, enqueue, list_backups, shutdown, status
 from model_backup.core import Store, atomic_json
 
 
 class BotTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rate_limit_status_displays_wait_and_attempt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = Store(root / 'jobs.db')
+            job = store.add(42, 'owner/model', 'main', None)
+            store.update(job, 'running')
+            atomic_json(root / f'{job}.json', {'phase': 'rate_limited', 'retry_number': 2,
+                        'retry_limit': 5, 'retry_at': 1060, 'done': 1, 'count': 3})
+            update, context = self.report_context(root, store, [str(job)])
+            with patch('model_backup.bot.time.time', return_value=1000):
+                await status(update, context)
+            text = update.effective_message.reply_text.await_args.args[0]
+            self.assertIn('รอลองใหม่อัตโนมัติ', text)
+            self.assertIn('ลองใหม่ใน 60 วินาที (ครั้ง 2/5)', text)
+            store.db.close()
+
+    async def test_cancel_terminates_worker_during_rate_limit_sleep(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = Store(root / 'jobs.db')
+            job = store.add(42, 'owner/model', 'main', None)
+            store.update(job, 'running')
+            update, context = self.report_context(root, store, [str(job)])
+            script = '''
+import sys
+from pathlib import Path
+from model_backup.retry import RateLimited, RetryPolicy, with_rate_limit_retry
+def operation():
+    raise RateLimited({'retry-after': '3600'})
+with_rate_limit_retry(operation, Path(sys.argv[1]), {'phase': 'planning'}, RetryPolicy())
+'''
+            progress = root / f'{job}.json'
+            process = await asyncio.create_subprocess_exec(sys.executable, '-c', script, str(progress))
+            try:
+                async def wait_for_cooldown():
+                    while not progress.exists() or json.loads(progress.read_text()).get('phase') != 'rate_limited':
+                        await asyncio.sleep(0.01)
+                await asyncio.wait_for(wait_for_cooldown(), 10)
+                context.application.bot_data.update(active_id=job, process=process)
+                await cancel(update, context)
+                await asyncio.wait_for(process.wait(), 5)
+                self.assertNotEqual(process.returncode, 0)
+                self.assertEqual(store.get(job)['status'], 'cancelled')
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+                store.db.close()
+
     def report_context(self, root, store, args=None):
         context = SimpleNamespace(application=SimpleNamespace(bot_data={
             'allowed': {42}, 'store': store, 'state': root}), args=args or [])
