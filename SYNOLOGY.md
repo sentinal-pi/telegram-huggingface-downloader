@@ -137,6 +137,7 @@ sudo docker compose exec model-backup python -m model_backup.verify /data/models
 | --- | --- |
 | ไม่มี Container Manager ใน Package Center | ตรวจรุ่น NAS และเวอร์ชัน DSM ว่ารองรับแพ็กเกจหรือไม่ |
 | Container restart วน | เปิด Log ตรวจ Token, ALLOWED_USER_IDS และสิทธิ์โฟลเดอร์ |
+| Permission denied: /app/model_backup/bot.py | อัปเดต Dockerfile แล้ว Build Project ใหม่ Dockerfile รุ่นปัจจุบันตั้งโฟลเดอร์โค้ดเป็น 755 และไฟล์เป็น 644 ภายใน image เพื่อให้ UID 1026:100 อ่านได้ แม้ไฟล์ต้นทางบน NAS จะเป็น 700/600 |
 | Permission denied / cannot open database | ตรวจ PUID/PGID, สิทธิ์อ่านเขียน AIModels และ state รวมโฟลเดอร์แม่ |
 | Telegram Conflict | หยุดบอตอีก instance ที่ใช้ Token เดียวกัน |
 | No matching manifest / no matching distribution | ตรวจว่า NAS เป็น CPU 64-bit และส่งรุ่น NAS/DSM เพื่อปรับ image/dependencies |
