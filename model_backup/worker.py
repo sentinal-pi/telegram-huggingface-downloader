@@ -8,9 +8,42 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub.errors import (GatedRepoError, RemoteEntryNotFoundError,
+                                    RepositoryNotFoundError, RevisionNotFoundError)
 
 from .core import Store, atomic_json, digest, safe_path
 from .retry import RetryPolicy, configure_http_client, with_rate_limit_retry
+
+
+def error_message(error, job):
+    """Translate upstream failures without exposing request URLs or credentials."""
+    exc = error
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, GatedRepoError):
+            return (f"ไม่มีสิทธิ์เข้าถึงโมเดล gated: {job['repo']}\n"
+                    'ขอสิทธิ์หรือยอมรับเงื่อนไขบนหน้าโมเดล แล้วตั้ง HF_TOKEN ของบัญชีที่มีสิทธิ์')
+        if isinstance(exc, RevisionNotFoundError):
+            return (f"ไม่พบ revision: {job['revision']} ของโมเดล {job['repo']}\n"
+                    'ตรวจชื่อ branch, tag หรือ commit แล้วส่งคำสั่งดาวน์โหลดใหม่')
+        if isinstance(exc, RemoteEntryNotFoundError):
+            return f"ไม่พบไฟล์ที่ต้องดาวน์โหลดในโมเดล: {job['repo']}\nไฟล์อาจถูกลบหรือไม่อยู่ใน revision นี้"
+        response = getattr(exc, 'response', None)
+        code = getattr(response, 'status_code', None)
+        if isinstance(exc, RepositoryNotFoundError):
+            if code == 401:
+                # HF also returns 401 for nonexistent repos; do not claim certainty.
+                return (f"ไม่พบโมเดลหรือไม่มีสิทธิ์เข้าถึง: {job['repo']}\n"
+                        'ตรวจชื่อหรือ URL หากเป็น private/gated ให้ตรวจ HF_TOKEN และสิทธิ์ของบัญชี')
+            return (f"ไม่พบโมเดล: {job['repo']}\n"
+                    'ตรวจชื่อหรือ URL โมเดลอาจถูกลบ เปลี่ยนชื่อ หรือเป็น private ที่บัญชีไม่มีสิทธิ์เข้าถึง')
+        if code in (401, 403):
+            return f"ไม่มีสิทธิ์เข้าถึงโมเดล: {job['repo']}\nตรวจ HF_TOKEN และสิทธิ์ของบัญชี"
+        if code == 404:
+            return f"ไม่พบโมเดลหรือข้อมูลที่ร้องขอ: {job['repo']}\nตรวจชื่อโมเดล revision และไฟล์ที่ต้องดาวน์โหลด"
+        exc = exc.__cause__ or exc.__context__
+    return str(error) if isinstance(error, ValueError) else 'ดาวน์โหลดล้มเหลว ตรวจเครือข่ายและลองใหม่ภายหลัง'
 
 
 def download(job, root, progress, max_gb, reserve_gb):
@@ -64,7 +97,11 @@ def main():
     parser.add_argument('job_id', type=int)
     args = parser.parse_args()
     state = Path(os.environ['STATE_DIR'])
-    job = Store(state / 'jobs.sqlite3').get(args.job_id)
+    store = Store(state / 'jobs.sqlite3')
+    try:
+        job = store.get(args.job_id)
+    finally:
+        store.db.close()
     progress = state / f'{args.job_id}.json'
     try:
         configure_http_client()
@@ -72,7 +109,7 @@ def main():
                  float(os.getenv('MAX_MODEL_GB', '100')), float(os.getenv('MIN_FREE_GB', '5')))
     except Exception as exc:
         # Do not expose URLs, request headers, tokens, or raw upstream exceptions.
-        message = str(exc) if isinstance(exc, ValueError) else 'ดาวน์โหลดล้มเหลว ตรวจ repo, revision, สิทธิ์ HF_TOKEN และเครือข่าย'
+        message = error_message(exc, job)
         atomic_json(progress, {'phase': 'failed', 'error': message[:500]})
         raise SystemExit(1) from None
 

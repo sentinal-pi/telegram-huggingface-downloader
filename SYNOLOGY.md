@@ -141,6 +141,9 @@ sudo docker compose exec model-backup python -m model_backup.verify /data/models
 | Telegram Conflict | หยุดบอตอีก instance ที่ใช้ Token เดียวกัน |
 | No matching manifest / no matching distribution | ตรวจว่า NAS เป็น CPU 64-bit และส่งรุ่น NAS/DSM เพื่อปรับ image/dependencies |
 | โมเดล private/gated โหลดไม่ได้ | ตรวจ HF_TOKEN และสิทธิ์เข้า repo/การยอมรับเงื่อนไข |
+| ไม่พบโมเดล | ตรวจชื่อ owner/model หรือ URL อาจถูกลบ เปลี่ยนชื่อ หรือถูกซ่อนเป็น private |
+| ไม่พบโมเดลหรือไม่มีสิทธิ์เข้าถึง | Hugging Face ตอบ 401 ซึ่งแยกชื่อที่ไม่มีจาก private ไม่ได้ ให้ตรวจชื่อและ HF_TOKEN |
+| ไม่พบ revision | ตรวจชื่อ branch, tag หรือ commit แล้วส่งคำสั่งใหม่ |
 | พื้นที่ไม่พอ | ตรวจ `/disk`, MAX_MODEL_GB และ MIN_FREE_GB |
 
 รายละเอียด Compose: [Docker services reference](https://docs.docker.com/reference/compose-file/services/)
