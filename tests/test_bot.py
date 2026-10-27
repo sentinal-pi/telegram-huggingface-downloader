@@ -151,7 +151,8 @@ with_rate_limit_retry(operation, Path(sys.argv[1]), {'phase': 'planning'}, Retry
                 self.assertEqual(job['repo'], repo)
                 self.assertEqual(job['revision'], 'main')
                 self.assertIsNone(job['pattern'])
-            self.assertEqual(len(store.recent(42)), 2)
+            self.assertEqual(len(store.recent(42)), 1)
+            self.assertIn('รายการซ้ำ', update.effective_message.reply_text.await_args.args[0])
             store.db.close()
 
     async def test_invalid_plain_text_does_not_enqueue(self):
@@ -180,7 +181,7 @@ with_rate_limit_retry(operation, Path(sys.argv[1]), {'phase': 'planning'}, Retry
             self.assertTrue(all(row['revision'] == 'main' and row['pattern'] is None for row in rows))
             text = '\n'.join(call.args[0] for call in update.effective_message.reply_text.await_args_list)
             self.assertIn('เพิ่มเข้าคิว 3 งาน', text)
-            self.assertIn('ข้ามรายการซ้ำ: owner/first', text)
+            self.assertIn('รายการซ้ำ: owner/first', text)
             self.assertIn('❌', text)
             self.assertIn('invalid', text)
             store.db.close()

@@ -24,6 +24,7 @@ MAX_QUEUE_SIZE = 100
 HELP = f'''🤖 AI Model Backup — Hugging Face
 ส่ง URL หน้าโมเดล หรือ owner/model ได้โดยตรง
 ส่งหลายโมเดลได้ โดยแยกบรรทัดละหนึ่งโมเดล (คิวรวมสูงสุด {MAX_QUEUE_SIZE} งาน)
+ตรวจรายการซ้ำกับคิวและประวัติที่สำเร็จแล้ว เมื่อ repo, revision และ pattern ตรงกัน
 บอตจะดาวน์โหลดไฟล์ทั้งหมดจาก main ให้อัตโนมัติ
 /download owner/model [revision] [pattern]
 ตัวอย่าง: /download Qwen/Qwen2.5-0.5B-Instruct
@@ -75,23 +76,37 @@ async def download_text(update, context):
         await enqueue_request(update, context, entries)
         return
     store = context.application.bot_data['store']
-    seen = set()
     results = []
     added = 0
     for index, entry in enumerate(entries, 1):
         try:
             repo = parse_repo(entry)
-            if repo in seen:
-                results.append(f'ข้ามรายการซ้ำ: {repo}')
-                continue
-            seen.add(repo)
             job_id = queue_job(store, update.effective_chat.id, repo, 'main', None)
             results.append(f'✅ #{job_id}: {repo}')
             added += 1
+        except DuplicateJobError as exc:
+            results.append(f'⚠️ {exc}')
         except ValueError as exc:
             results.append(f'❌ บรรทัดที่ {index}: {entry}\n{exc}')
     await reply_sections(update, [f'เพิ่มเข้าคิว {added} งาน (revision: main, ไฟล์: ทั้งหมด)',
                                   *results, 'ดูคิว: /status'])
+
+
+class DuplicateJobError(ValueError):
+    pass
+
+
+def ensure_no_duplicate(store, chat, repo, revision, pattern, exclude_id=0):
+    job = store.find_duplicate(repo, revision, pattern, exclude_id)
+    if job is None:
+        return
+    statuses = {'queued': 'รอคิว', 'running': 'กำลังโหลด', 'completed': 'โหลดสำเร็จแล้ว'}
+    message = f"รายการซ้ำ: {repo}\n"
+    if job['chat_id'] == chat:
+        message += f"มีงาน #{job['id']} อยู่แล้ว ({statuses[job['status']]})\nดูรายละเอียด: /status {job['id']}"
+    else:
+        message += f"มีโมเดลชุดนี้อยู่ในระบบแล้ว ({statuses[job['status']]})"
+    raise DuplicateJobError(message)
 
 
 def ensure_queue_capacity(store):
@@ -101,6 +116,7 @@ def ensure_queue_capacity(store):
 
 
 def queue_job(store, chat, repo, revision, pattern):
+    ensure_no_duplicate(store, chat, repo, revision, pattern)
     ensure_queue_capacity(store)
     return store.add(chat, repo, revision, pattern)
 
@@ -221,6 +237,8 @@ async def retry(update, context):
         await update.effective_message.reply_text('ใช้ /retry job_id ของงานที่ล้มเหลวหรือยกเลิกแล้ว (รอ process เดิมหยุดก่อน)')
         return
     try:
+        ensure_no_duplicate(data['store'], update.effective_chat.id, job['repo'],
+                            job['revision'], job['pattern'], exclude_id=job['id'])
         ensure_queue_capacity(data['store'])
     except ValueError as exc:
         await update.effective_message.reply_text(str(exc))

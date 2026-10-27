@@ -65,6 +65,13 @@ class Store:
     def get(self, job_id):
         return self.db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
 
+    def find_duplicate(self, repo, revision, pattern, exclude_id=0):
+        return self.db.execute(
+            "SELECT * FROM jobs WHERE repo=? AND revision=? AND pattern IS ? AND id!=? "
+            "AND status IN ('queued','running','completed') "
+            "ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,id DESC LIMIT 1",
+            (repo, revision, pattern, exclude_id)).fetchone()
+
     def recent(self, chat):
         return self.db.execute('SELECT * FROM jobs WHERE chat_id=? ORDER BY id DESC LIMIT 10', (chat,)).fetchall()
 
