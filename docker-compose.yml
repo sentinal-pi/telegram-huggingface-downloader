@@ -1,0 +1,31 @@
+services:
+  model-backup:
+    platform: "${DOCKER_PLATFORM:-linux/amd64}"
+    build: .
+    image: telegram-model-backup:local
+    restart: unless-stopped
+    init: true
+    user: "${PUID:-1026}:${PGID:-100}"
+    env_file:
+      - .env
+    environment:
+      BACKUP_DIR: /data/models
+      STATE_DIR: /data/state
+      HF_HOME: /data/state/huggingface
+      TZ: Asia/Bangkok
+    volumes:
+      - "${NAS_BACKUP_DIR:-./backups}:/data/models"
+      - "${NAS_STATE_DIR:-./state}:/data/state"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

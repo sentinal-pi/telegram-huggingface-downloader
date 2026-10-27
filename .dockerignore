@@ -1,0 +1,4 @@
+*
+!requirements.txt
+!model_backup/
+!model_backup/*.py
