@@ -89,6 +89,8 @@ with_rate_limit_retry(operation, Path(sys.argv[1]), {'phase': 'planning'}, Retry
                 for line in text.splitlines():
                     if line.startswith('#'):
                         seen.add(int(line.split()[0][1:]))
+                        repo = line.split()[1]
+                        self.assertIn(f'หน้าโมเดล: https://huggingface.co/{repo}', text)
             self.assertEqual(seen, set(range(1, 13)))
             for invalid in ['0', '-1', 'no', '4', '99999999999999999999']:
                 update, context = self.report_context(root, store, [invalid])

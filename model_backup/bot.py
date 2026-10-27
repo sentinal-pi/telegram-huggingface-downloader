@@ -182,8 +182,13 @@ async def reply_sections(update, sections):
     # Split long reports instead of silently dropping jobs at Telegram's limit.
     text = '\n\n'.join(sections)
     while text:
-        await update.effective_message.reply_text(text[:3500])
-        text = text[3500:]
+        end = len(text)
+        if end > 3500:
+            end = text.rfind('\n', 0, 3501)
+            if end <= 0:
+                end = 3500
+        await update.effective_message.reply_text(text[:end])
+        text = text[end:].lstrip('\n')
 
 
 @protected
@@ -240,6 +245,7 @@ async def list_backups(update, context):
     for job in rows:
         p = progress_for(data, job['id'])
         line = f"#{job['id']} {job['repo']}\nrevision: {job['revision']} | ไฟล์: {job['pattern'] or 'ทั้งหมด'}"
+        line += f"\nหน้าโมเดล: https://huggingface.co/{job['repo']}"
         if p.get('phase') == 'completed':
             line += f"\n{p.get('count', '?')} ไฟล์ | {p.get('bytes', 0) / 1024**3:.3f} GiB"
         line += f"\nตำแหน่ง: {job['detail']}"
