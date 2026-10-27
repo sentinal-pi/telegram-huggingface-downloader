@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from model_backup.bot import cancel, download_text, enqueue, list_backups, shutdown, status
+from model_backup.bot import cancel, download_text, enqueue, list_backups, retry, shutdown, status
 from model_backup.core import Store, atomic_json
 
 
@@ -106,16 +106,16 @@ with_rate_limit_retry(operation, Path(sys.argv[1]), {'phase': 'planning'}, Retry
             store.update(active, 'running')
             atomic_json(root / f'{active}.json', {'phase': 'downloading', 'done': 2,
                         'count': 4, 'file': 'weights.safetensors', 'bytes': 1024**3})
-            for i in range(15):
+            for i in range(99):
                 store.add(42, f'owner/queued-{i}', 'main', None)
             hidden = store.add(99, 'other/hidden', 'main', None)
             update, context = self.report_context(root, store)
             await status(update, context)
             text = '\n'.join(call.args[0] for call in update.effective_message.reply_text.await_args_list)
-            self.assertIn('กำลังทำงาน 1 | รอคิว 15', text)
+            self.assertIn('กำลังทำงาน 1 | รอคิว 99', text)
             self.assertIn('2/4 (50.0% ตามจำนวนไฟล์)', text)
             self.assertIn('weights.safetensors', text)
-            for i in range(15):
+            for i in range(99):
                 self.assertIn(f'owner/queued-{i} — queued', text)
             self.assertNotIn('other/hidden', text)
             update, context = self.report_context(root, store, [str(hidden)])
@@ -189,17 +189,43 @@ with_rate_limit_retry(operation, Path(sys.argv[1]), {'phase': 'planning'}, Retry
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             store = Store(root / 'jobs.db')
-            for index in range(19):
+            for index in range(99):
                 store.add(42, f'owner/existing-{index}', 'main', None)
             update, context = self.report_context(root, store)
             update.effective_message.text = 'owner/accepted\nowner/overflow'
             await download_text(update, context)
-            self.assertEqual(store.db.execute('SELECT count(*) FROM jobs').fetchone()[0], 20)
+            self.assertEqual(store.db.execute('SELECT count(*) FROM jobs').fetchone()[0], 100)
             self.assertEqual(store.recent(42)[0]['repo'], 'owner/accepted')
             text = '\n'.join(call.args[0] for call in update.effective_message.reply_text.await_args_list)
             self.assertIn('เพิ่มเข้าคิว 1 งาน', text)
             self.assertIn('owner/overflow', text)
-            self.assertIn('คิวเต็ม', text)
+            self.assertIn('คิวเต็ม (100 งาน)', text)
+            store.db.close()
+
+    async def test_single_download_and_retry_respect_full_queue(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            store = Store(root / 'jobs.db')
+            for index in range(100):
+                job_id = store.add(42, f'owner/existing-{index}', 'main', None)
+            store.update(job_id, 'running')
+            failed = store.add(42, 'owner/failed', 'main', None)
+            store.update(failed, 'failed')
+            progress = root / f'{failed}.json'
+            atomic_json(progress, {'phase': 'failed', 'error': 'previous failure'})
+            update, context = self.report_context(root, store, ['owner/overflow'])
+            await enqueue(update, context)
+            self.assertIn('คิวเต็ม (100 งาน)', update.effective_message.reply_text.await_args.args[0])
+            update, context = self.report_context(root, store, [str(failed)])
+            await retry(update, context)
+            self.assertIn('คิวเต็ม (100 งาน)', update.effective_message.reply_text.await_args.args[0])
+            self.assertEqual(store.get(failed)['status'], 'failed')
+            self.assertTrue(progress.exists())
+            store.update(1, 'completed')
+            await retry(update, context)
+            self.assertEqual(store.get(failed)['status'], 'queued')
+            self.assertFalse(progress.exists())
+            self.assertEqual(store.db.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0], 100)
             store.db.close()
 
     async def test_authorized_download_is_persisted(self):

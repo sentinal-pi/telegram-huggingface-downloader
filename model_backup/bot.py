@@ -19,9 +19,11 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from .core import Store, parse_repo
 from .retry import RetryPolicy
 
-HELP = '''🤖 AI Model Backup — Hugging Face
+MAX_QUEUE_SIZE = 100
+
+HELP = f'''🤖 AI Model Backup — Hugging Face
 ส่ง URL หน้าโมเดล หรือ owner/model ได้โดยตรง
-ส่งหลายโมเดลได้ โดยแยกบรรทัดละหนึ่งโมเดล (คิวรวมสูงสุด 20 งาน)
+ส่งหลายโมเดลได้ โดยแยกบรรทัดละหนึ่งโมเดล (คิวรวมสูงสุด {MAX_QUEUE_SIZE} งาน)
 บอตจะดาวน์โหลดไฟล์ทั้งหมดจาก main ให้อัตโนมัติ
 /download owner/model [revision] [pattern]
 ตัวอย่าง: /download Qwen/Qwen2.5-0.5B-Instruct
@@ -92,10 +94,14 @@ async def download_text(update, context):
                                   *results, 'ดูคิว: /status'])
 
 
-def queue_job(store, chat, repo, revision, pattern):
+def ensure_queue_capacity(store):
     pending = store.db.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]
-    if pending >= 20:
-        raise ValueError('คิวเต็ม (20 งาน) รอให้บางงานเสร็จก่อน แล้วส่งรายการนี้ใหม่')
+    if pending >= MAX_QUEUE_SIZE:
+        raise ValueError(f'คิวเต็ม ({MAX_QUEUE_SIZE} งาน) รอให้บางงานเสร็จก่อน แล้วส่งรายการนี้ใหม่')
+
+
+def queue_job(store, chat, repo, revision, pattern):
+    ensure_queue_capacity(store)
     return store.add(chat, repo, revision, pattern)
 
 
@@ -213,6 +219,11 @@ async def retry(update, context):
     job = owned_job(update, context)
     if not job or job['status'] not in ('failed', 'cancelled') or data.get('active_id') == job['id']:
         await update.effective_message.reply_text('ใช้ /retry job_id ของงานที่ล้มเหลวหรือยกเลิกแล้ว (รอ process เดิมหยุดก่อน)')
+        return
+    try:
+        ensure_queue_capacity(data['store'])
+    except ValueError as exc:
+        await update.effective_message.reply_text(str(exc))
         return
     (data['state'] / f"{job['id']}.json").unlink(missing_ok=True)
     data['store'].update(job['id'], 'queued')
